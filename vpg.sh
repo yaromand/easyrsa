@@ -266,14 +266,19 @@ LimitNPROC=infinity" > /etc/systemd/system/openvpn-server@server.service.d/disab
 	easy_rsa_url='https://github.com/OpenVPN/easy-rsa/releases/download/v3.1.3/EasyRSA-3.1.3.tgz'
 	mkdir -p /etc/openvpn/server/easy-rsa/
 	{ wget -qO- "$easy_rsa_url" 2>/dev/null || curl -sL "$easy_rsa_url" ; } | tar xz -C /etc/openvpn/server/easy-rsa/ --strip-components 1
-	chown -R root:root /etc/openvpn/server/easy-rsa/
+chown -R root:root /etc/openvpn/server/easy-rsa/
+	#cd /etc/openvpn/server/easy-rsa/
+	# vars
+	cp vars /etc/openvpn/server/easy-rsa/vars
 	cd /etc/openvpn/server/easy-rsa/
-	# Create the PKI, set up the CA and the server and client certificates
-	./easyrsa --batch init-pki
+	chmod 0777 vars
+	./vars
+	# Create the PKI, set up the CA and the server and clie nt certificates
+	./easyrsa init-pki
 	./easyrsa --batch build-ca nopass
-	./easyrsa --batch --days=3650 build-server-full server nopass
-	./easyrsa --batch --days=3650 build-client-full "$client" nopass
-	./easyrsa --batch --days=3650 gen-crl
+	EASYRSA_CERT_EXPIRE=3650 ./easyrsa build-server-full server nopass
+	EASYRSA_CERT_EXPIRE=3650 ./easyrsa build-client-full "$client" nopass
+	EASYRSA_CRL_DAYS=3650 ./easyrsa gen-crl
 	# Move the stuff we need
 	cp pki/ca.crt pki/private/ca.key pki/issued/server.crt pki/private/server.key pki/crl.pem /etc/openvpn/server
 	# CRL is read with each client connection, while OpenVPN is dropped to nobody
