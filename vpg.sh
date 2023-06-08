@@ -174,17 +174,49 @@ if [[ ! -e /etc/openvpn/server.conf ]]; then
 	done
 	[[ -z "$port" ]] && port="1194"
 	echo
-	echo "Select a DNS server for the clients:"
-	echo "   1) Current system resolvers"
-	echo "   2) Google"
-	echo "   3) 1.1.1.1"
-	echo "   4) OpenDNS"
-	echo "   5) Quad9"
-	echo "   6) AdGuard"
-	read -p "DNS server [1]: " dns
-	until [[ -z "$dns" || "$dns" =~ ^[1-6]$ ]]; do
-		echo "$dns: invalid selection."
-		read -p "DNS server [1]: " dns
+	echo "What DNS resolvers do you want to use with the VPN?"
+	echo "   1) Current system resolvers (from /etc/resolv.conf)"
+	echo "   2) Self-hosted DNS Resolver (Unbound)"
+	echo "   3) Cloudflare (Anycast: worldwide)"
+	echo "   4) Quad9 (Anycast: worldwide)"
+	echo "   5) Quad9 uncensored (Anycast: worldwide)"
+	echo "   6) FDN (France)"
+	echo "   7) DNS.WATCH (Germany)"
+	echo "   8) OpenDNS (Anycast: worldwide)"
+	echo "   9) Google (Anycast: worldwide)"
+	echo "   10) Yandex Basic (Russia)"
+	echo "   11) AdGuard DNS (Anycast: worldwide)"
+	echo "   12) NextDNS (Anycast: worldwide)"
+	echo "   13) Custom"
+	until [[ $DNS =~ ^[0-9]+$ ]] && [ "$DNS" -ge 1 ] && [ "$DNS" -le 13 ]; do
+		read -rp "DNS [1-12]: " -e -i 11 DNS
+		if [[ $DNS == 2 ]] && [[ -e /etc/unbound/unbound.conf ]]; then
+			echo ""
+			echo "Unbound is already installed."
+			echo "You can allow the script to configure it in order to use it from your OpenVPN clients"
+			echo "We will simply add a second server to /etc/unbound/unbound.conf for the OpenVPN subnet."
+			echo "No changes are made to the current configuration."
+			echo ""
+
+			until [[ $CONTINUE =~ (y|n) ]]; do
+				read -rp "Apply configuration changes to Unbound? [y/n]: " -e CONTINUE
+			done
+			if [[ $CONTINUE == "n" ]]; then
+				# Break the loop and cleanup
+				unset DNS
+				unset CONTINUE
+			fi
+		elif [[ $DNS == "13" ]]; then
+			until [[ $DNS1 =~ ^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; do
+				read -rp "Primary DNS: " -e DNS1
+			done
+			until [[ $DNS2 =~ ^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$ ]]; do
+				read -rp "Secondary DNS (optional): " -e DNS2
+				if [[ $DNS2 == "" ]]; then
+					break
+				fi
+			done
+		fi
 	done
 	echo
 	echo "Enter a name for the first client:"
@@ -217,7 +249,7 @@ LimitNPROC=infinity" > /etc/systemd/system/openvpn-server@server.service.d/disab
 		apt-get update
 		apt-get install -y openvpn openssl ca-certificates $firewall
 		#zabbix-agent
-		apt-get install zabbix-agent
+	#	apt-get install zabbix-agent
 		#zabbix-agent
 	elif [[ "$os" = "centos" ]]; then
 		yum install -y epel-release
@@ -231,22 +263,17 @@ LimitNPROC=infinity" > /etc/systemd/system/openvpn-server@server.service.d/disab
 		systemctl enable --now firewalld.service
 	fi
 	# Get easy-rsa
-	easy_rsa_url='https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.8/EasyRSA-3.0.8.tgz'
+	easy_rsa_url='https://github.com/OpenVPN/easy-rsa/releases/download/v3.1.3/EasyRSA-3.1.3.tgz'
 	mkdir -p /etc/openvpn/server/easy-rsa/
 	{ wget -qO- "$easy_rsa_url" 2>/dev/null || curl -sL "$easy_rsa_url" ; } | tar xz -C /etc/openvpn/server/easy-rsa/ --strip-components 1
 	chown -R root:root /etc/openvpn/server/easy-rsa/
-	#cd /etc/openvpn/server/easy-rsa/
-	# vars
-	cp vars /etc/openvpn/server/easy-rsa/vars
 	cd /etc/openvpn/server/easy-rsa/
-	chmod 0777 vars
-	./vars
-	# Create the PKI, set up the CA and the server and clie nt certificates
-	./easyrsa init-pki
+	# Create the PKI, set up the CA and the server and client certificates
+	./easyrsa --batch init-pki
 	./easyrsa --batch build-ca nopass
-	EASYRSA_CERT_EXPIRE=3650 ./easyrsa build-server-full server nopass
-	EASYRSA_CERT_EXPIRE=3650 ./easyrsa build-client-full "$client" nopass
-	EASYRSA_CRL_DAYS=3650 ./easyrsa gen-crl
+	./easyrsa --batch --days=3650 build-server-full server nopass
+	./easyrsa --batch --days=3650 build-client-full "$client" nopass
+	./easyrsa --batch --days=3650 gen-crl
 	# Move the stuff we need
 	cp pki/ca.crt pki/private/ca.key pki/issued/server.crt pki/private/server.key pki/crl.pem /etc/openvpn/server
 	# CRL is read with each client connection, while OpenVPN is dropped to nobody
@@ -303,31 +330,76 @@ chmod +x /etc/rc.local
 		echo 'push "redirect-gateway def1 ipv6 bypass-dhcp"' >> /etc/openvpn/server.conf
 	fi
 	echo 'ifconfig-pool-persist /etc/openvpn/server/ipp.txt' >> /etc/openvpn/server.conf
-	# DNS
-	case "$dns" in
-		1|"")
-			echo 'push "dhcp-option DNS 8.8.8.8"' >> /etc/openvpn/server.conf
-			echo 'push "dhcp-option DNS 8.8.4.4"' >> /etc/openvpn/server.conf
+
+	# DNS resolvers
+	case $DNS in
+	1) # Current system resolvers
+		# Locate the proper resolv.conf
+		# Needed for systems running systemd-resolved
+		if grep -q "127.0.0.53" "/etc/resolv.conf"; then
+			RESOLVCONF='/run/systemd/resolve/resolv.conf'
+		else
+			RESOLVCONF='/etc/resolv.conf'
+		fi
+		# Obtain the resolvers from resolv.conf and use them for OpenVPN
+		sed -ne 's/^nameserver[[:space:]]\+\([^[:space:]]\+\).*$/\1/p' $RESOLVCONF | while read -r line; do
+			# Copy, if it's a IPv4 |or| if IPv6 is enabled, IPv4/IPv6 does not matter
+			if [[ $line =~ ^[0-9.]*$ ]] || [[ $IPV6_SUPPORT == 'y' ]]; then
+				echo "push \"dhcp-option DNS $line\"" >>/etc/openvpn/server.conf
+			fi
+		done
 		;;
-		2)
-			echo 'push "dhcp-option DNS 8.8.8.8"' >> /etc/openvpn/server.conf
-			echo 'push "dhcp-option DNS 8.8.4.4"' >> /etc/openvpn/server.conf
+	2) # Self-hosted DNS resolver (Unbound)
+		echo 'push "dhcp-option DNS 10.8.0.1"' >>/etc/openvpn/server.conf
+		if [[ $IPV6_SUPPORT == 'y' ]]; then
+			echo 'push "dhcp-option DNS fd42:42:42:42::1"' >>/etc/openvpn/server.conf
+		fi
 		;;
-		3)
-			echo 'push "dhcp-option DNS 1.1.1.1"' >> /etc/openvpn/server.conf
-			echo 'push "dhcp-option DNS 1.0.0.1"' >> /etc/openvpn/server.conf
+	3) # Cloudflare
+		echo 'push "dhcp-option DNS 1.0.0.1"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 1.1.1.1"' >>/etc/openvpn/server.conf
 		;;
-		4)
-			echo 'push "dhcp-option DNS 208.67.222.222"' >> /etc/openvpn/server.conf
-			echo 'push "dhcp-option DNS 208.67.220.220"' >> /etc/openvpn/server.conf
+	4) # Quad9
+		echo 'push "dhcp-option DNS 9.9.9.9"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 149.112.112.112"' >>/etc/openvpn/server.conf
 		;;
-		5)
-			echo 'push "dhcp-option DNS 9.9.9.9"' >> /etc/openvpn/server.conf
-			echo 'push "dhcp-option DNS 149.112.112.112"' >> /etc/openvpn/server.conf
+	5) # Quad9 uncensored
+		echo 'push "dhcp-option DNS 9.9.9.10"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 149.112.112.10"' >>/etc/openvpn/server.conf
 		;;
-		6)
-			echo 'push "dhcp-option DNS 176.103.130.130"' >> /etc/openvpn/server.conf
-			echo 'push "dhcp-option DNS 176.103.130.131"' >> /etc/openvpn/server.conf
+	6) # FDN
+		echo 'push "dhcp-option DNS 80.67.169.40"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 80.67.169.12"' >>/etc/openvpn/server.conf
+		;;
+	7) # DNS.WATCH
+		echo 'push "dhcp-option DNS 84.200.69.80"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 84.200.70.40"' >>/etc/openvpn/server.conf
+		;;
+	8) # OpenDNS
+		echo 'push "dhcp-option DNS 208.67.222.222"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 208.67.220.220"' >>/etc/openvpn/server.conf
+		;;
+	9) # Google
+		echo 'push "dhcp-option DNS 8.8.8.8"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 8.8.4.4"' >>/etc/openvpn/server.conf
+		;;
+	10) # Yandex Basic
+		echo 'push "dhcp-option DNS 77.88.8.8"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 77.88.8.1"' >>/etc/openvpn/server.conf
+		;;
+	11) # AdGuard DNS
+		echo 'push "dhcp-option DNS 94.140.14.14"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 94.140.15.15"' >>/etc/openvpn/server.conf
+		;;
+	12) # NextDNS
+		echo 'push "dhcp-option DNS 45.90.28.167"' >>/etc/openvpn/server.conf
+		echo 'push "dhcp-option DNS 45.90.30.167"' >>/etc/openvpn/server.conf
+		;;
+	13) # Custom DNS
+		echo "push \"dhcp-option DNS $DNS1\"" >>/etc/openvpn/server.conf
+		if [[ $DNS2 != "" ]]; then
+			echo "push \"dhcp-option DNS $DNS2\"" >>/etc/openvpn/server.conf
+		fi
 		;;
 	esac
 	echo "keepalive 10 120
@@ -439,25 +511,73 @@ persist-tun
 remote-cert-tls server
 comp-lzo
 mssfix 1500
-
-dhcp-option DNS 8.8.8.8
-dhcp-option DNS 8.8.4.4
-
+ 
+ 
 auth SHA512
 cipher AES-256-CBC
-setenv opt block-outside-dns
-up /etc/openvpn/update-resolv-conf
-down /etc/openvpn/update-resolv-conf
+setenv opt block-outside-dns 
 verb 3" > /etc/openvpn/server/client-common.txt
+	# DNS resolvers
+	case $DNS in
+	2) # Self-hosted DNS resolver (Unbound)
+		echo 'dhcp-option DNS 10.8.0.1' >>/etc/openvpn/server/client-common.txt
+		if [[ $IPV6_SUPPORT == 'y' ]]; then
+			echo 'dhcp-option DNS fd42:42:42:42::1' >>/etc/openvpn/server/client-common.txt
+		fi
+		;;
+	3) # Cloudflare
+		echo 'dhcp-option DNS 1.0.0.1' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 1.1.1.1' >>/etc/openvpn/server/client-common.txt
+		;;
+	4) # Quad9
+		echo 'dhcp-option DNS 9.9.9.9' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 149.112.112.112' >>/etc/openvpn/server/client-common.txt
+		;;
+	5) # Quad9 uncensored
+		echo 'dhcp-option DNS 9.9.9.10' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 149.112.112.10' >>/etc/openvpn/server/client-common.txt
+		;;
+	6) # FDN
+		echo 'dhcp-option DNS 80.67.169.40' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 80.67.169.12' >>/etc/openvpn/server/client-common.txt
+		;;
+	7) # DNS.WATCH
+		echo 'dhcp-option DNS 84.200.69.80' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 84.200.70.40' >>/etc/openvpn/server/client-common.txt
+		;;
+	8) # OpenDNS
+		echo 'dhcp-option DNS 208.67.222.222' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 208.67.220.220' >>/etc/openvpn/server/client-common.txt
+		;;
+	9) # Google
+		echo 'dhcp-option DNS 8.8.8.8' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 8.8.4.4' >>/etc/openvpn/server/client-common.txt
+		;;
+	10) # Yandex Basic
+		echo 'dhcp-option DNS 77.88.8.8' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 77.88.8.1' >>/etc/openvpn/server/client-common.txt
+		;;
+	11) # AdGuard DNS
+		echo 'dhcp-option DNS 94.140.14.14' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 94.140.15.15' >>/etc/openvpn/server/client-common.txt
+		;;
+	12) # NextDNS
+		echo 'dhcp-option DNS 45.90.28.167' >>/etc/openvpn/server/client-common.txt
+		echo 'dhcp-option DNS 45.90.30.167' >>/etc/openvpn/server/client-common.txt
+		;;
+	esac
+	echo "up /etc/openvpn/update-resolv-conf">>/etc/openvpn/server/client-common.txt
+	echo "down /etc/openvpn/update-resolv-conf">>/etc/openvpn/server/client-common.txt 
+	
 	# Enable and start the OpenVPN service
-	systemctl enable --now openvpn-server@server.service
-	echo
-	mv /root/zabbix_agentd.conf /etc/zabbix/zabbix_agentd.conf
-	echo
-	systemctl enable zabbix-agent
-	echo
-	echo
-	systemctl restart zabbix-agent
+	#systemctl enable --now openvpn-server@server.service
+	#echo
+	#mv /root/zabbix_agentd.conf /etc/zabbix/zabbix_agentd.conf
+	#echo
+	#systemctl enable zabbix-agent
+	#echo
+	#echo
+	#systemctl restart zabbix-agent
 	# Generates the custom client.ovpn
 	new_client
 	echo
