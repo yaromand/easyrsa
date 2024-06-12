@@ -1,5 +1,5 @@
 #!/bin/bash
-chatId=-835462349
+chatId=-1002148917500
 botToken=5513409411:AAFyGIDek5LNS7MZi2Zoaa93s5csce_SmZw
  
 # Detect Debian users running the script with "sh" instead of bash
