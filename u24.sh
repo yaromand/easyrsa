@@ -297,15 +297,12 @@ ssbzSibBsu/6iGtCOGEoXJf//////////wIBAg==
 	echo "local $ip
 port $port
 proto $protocol
-dev tun
-comp-lzo
+dev tun 
 tun-mtu 1500
 mssfix 
 nice -19
 sndbuf 0
-rcvbuf 0
-push "sndbuf 5242888"
-push "rcvbuf 5242888"
+rcvbuf 0 
 ca /etc/openvpn/server/ca.crt
 cert /etc/openvpn/server/server.crt
 key /etc/openvpn/server/server.key
@@ -460,8 +457,7 @@ resolv-retry infinite
 nobind
 persist-key
 persist-tun
-remote-cert-tls server
-comp-lzo
+remote-cert-tls server 
 mssfix 1500
 
 dhcp-option DNS 8.8.8.8
@@ -473,6 +469,7 @@ up /etc/openvpn/update-resolv-conf
 down /etc/openvpn/update-resolv-conf
 verb 3" > /etc/openvpn/server/client-common.txt
 	# Enable and start the OpenVPN service
+	cp /etc/openvpn/server/server.conf /etc/openvpn/server.conf
 	systemctl enable --now openvpn-server@server.service
 	# Generates the custom client.ovpn
 	new_client
@@ -592,12 +589,12 @@ else
 				rm -f /etc/systemd/system/openvpn-server@server.service.d/disable-limitnproc.conf
 				rm -f /etc/sysctl.d/99-openvpn-forward.conf
 				if [[ "$os" = "debian" || "$os" = "ubuntu" ]]; then
-					rm -rf /etc/openvpn/server
+					rm -rf /etc/openvpn/
 					apt-get remove --purge -y openvpn
 				else
 					# Else, OS must be CentOS or Fedora
 					dnf remove -y openvpn
-					rm -rf /etc/openvpn/server
+					rm -rf /etc/openvpn/
 				fi
 				echo
 				echo "OpenVPN removed!"
